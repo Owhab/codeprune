@@ -1,0 +1,120 @@
+import { Project, SyntaxKind, Node } from 'ts-morph';
+import path from 'path';
+import fs from 'fs';
+
+export interface ParsedDependencies {
+  static: string[];
+  dynamic: string[];
+}
+
+export class ImportParser {
+  private project: Project;
+  private extensions: string[];
+
+  constructor(extensions: string[]) {
+    this.extensions = extensions;
+    this.project = new Project({
+      compilerOptions: {
+        allowJs: true,
+        resolveJsonModule: true,
+      },
+      skipAddingFilesFromTsConfig: true,
+    });
+  }
+
+  public parseFile(filePath: string): ParsedDependencies {
+    const deps: ParsedDependencies = { static: [], dynamic: [] };
+    
+    let sourceFile = this.project.getSourceFile(filePath);
+    if (!sourceFile) {
+      if (!fs.existsSync(filePath)) {
+        return deps;
+      }
+      sourceFile = this.project.addSourceFileAtPath(filePath);
+    }
+
+    // 1. Static imports: `import x from 'y'`
+    for (const decl of sourceFile.getImportDeclarations()) {
+      const mod = decl.getModuleSpecifierValue();
+      if (mod) {
+        const resolved = this.resolveModulePath(filePath, mod);
+        if (resolved) deps.static.push(resolved);
+      }
+    }
+
+    // 2. Export declarations: `export * from 'y'`
+    for (const decl of sourceFile.getExportDeclarations()) {
+      if (decl.hasModuleSpecifier()) {
+        const mod = decl.getModuleSpecifierValue();
+        if (mod) {
+          const resolved = this.resolveModulePath(filePath, mod);
+          if (resolved) deps.static.push(resolved);
+        }
+      }
+    }
+
+    // 3. Requires and dynamic imports
+    sourceFile.forEachDescendant(node => {
+      if (Node.isCallExpression(node)) {
+        const expression = node.getExpression();
+        
+        // require('y')
+        if (Node.isIdentifier(expression) && expression.getText() === 'require') {
+          const args = node.getArguments();
+          if (args.length > 0 && Node.isStringLiteral(args[0])) {
+            const resolved = this.resolveModulePath(filePath, args[0].getLiteralValue());
+            if (resolved) deps.static.push(resolved);
+          }
+        }
+        
+        // import('y')
+        if (node.getExpression().getKind() === SyntaxKind.ImportKeyword) {
+          const args = node.getArguments();
+          if (args.length > 0 && Node.isStringLiteral(args[0])) {
+            const resolved = this.resolveModulePath(filePath, args[0].getLiteralValue());
+            if (resolved) deps.dynamic.push(resolved);
+          }
+        }
+      }
+    });
+
+    return deps;
+  }
+
+  private resolveModulePath(fromFile: string, specifier: string): string | null {
+    if (!specifier.startsWith('.')) {
+      if (path.isAbsolute(specifier)) {
+        if (fs.existsSync(specifier) && fs.statSync(specifier).isFile()) {
+           return path.normalize(specifier);
+        }
+      }
+      // For MVP, skip non-relative paths (like npm modules or aliases)
+      return null;
+    }
+
+    const resolvedPath = path.resolve(path.dirname(fromFile), specifier);
+    
+    // Direct match (e.g. style.css)
+    if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
+      return path.normalize(resolvedPath);
+    }
+
+    // Extensions
+    for (const ext of this.extensions) {
+      const withExt = `${resolvedPath}${ext}`;
+      if (fs.existsSync(withExt) && fs.statSync(withExt).isFile()) {
+        return path.normalize(withExt);
+      }
+    }
+
+    // Index files
+    for (const ext of this.extensions) {
+      const indexPath = path.join(resolvedPath, `index${ext}`);
+      if (fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) {
+        return path.normalize(indexPath);
+      }
+    }
+
+    return null;
+  }
+}
