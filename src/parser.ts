@@ -84,17 +84,46 @@ export class ImportParser {
   private resolveModulePath(fromFile: string, specifier: string): string | null {
     if (!specifier.startsWith('.')) {
       if (path.isAbsolute(specifier)) {
-        if (fs.existsSync(specifier) && fs.statSync(specifier).isFile()) {
-           return path.normalize(specifier);
-        }
+        const resolved = this.tryResolve(specifier);
+        if (resolved) return resolved;
       }
-      // For MVP, skip non-relative paths (like npm modules or aliases)
+      
+      // Basic alias support for @/ and ~/
+      if (specifier.startsWith('@/') || specifier.startsWith('~/')) {
+        const relativeSpecifier = specifier.substring(2);
+        
+        // Try mapping from root
+        let aliasPath = path.resolve(process.cwd(), relativeSpecifier);
+        let resolved = this.tryResolve(aliasPath);
+        if (resolved) return resolved;
+
+        // Try mapping from src/
+        aliasPath = path.resolve(process.cwd(), 'src', relativeSpecifier);
+        resolved = this.tryResolve(aliasPath);
+        if (resolved) return resolved;
+      }
+
+      // Skip npm modules
       return null;
     }
 
     const resolvedPath = path.resolve(path.dirname(fromFile), specifier);
-    
-    // Direct match (e.g. style.css)
+    return this.tryResolve(resolvedPath);
+  }
+
+  private tryResolve(resolvedPath: string): string | null {
+    // Handle ESM imports where specifier has .js but the file is .ts or .tsx
+    if (resolvedPath.endsWith('.js') && !fs.existsSync(resolvedPath)) {
+      const withoutExt = resolvedPath.slice(0, -3);
+      if (fs.existsSync(withoutExt + '.ts')) {
+        return path.normalize(withoutExt + '.ts');
+      }
+      if (fs.existsSync(withoutExt + '.tsx')) {
+        return path.normalize(withoutExt + '.tsx');
+      }
+    }
+
+    // Direct match
     if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
       return path.normalize(resolvedPath);
     }

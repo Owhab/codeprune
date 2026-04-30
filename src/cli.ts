@@ -2,10 +2,10 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import path from 'path';
-import { loadConfig } from './config';
-import { scanFiles } from './scanner';
-import { ImportParser } from './parser';
-import { buildGraph, findUnusedFiles } from './graph';
+import { loadConfig } from './config.js';
+import { scanFiles } from './scanner.js';
+import { ImportParser } from './parser.js';
+import { buildGraph, findUnusedFiles } from './graph.js';
 
 const program = new Command();
 
@@ -59,6 +59,28 @@ program
 
       console.log('');
       console.log(chalk.green(`✅ Done in ${timeTaken}s (Scanned ${result.totalFiles} files)`));
+
+      if (options.delete && result.unusedFiles.length > 0) {
+        const fs = await import('fs');
+        console.log('');
+        console.log(chalk.cyan('🗑️  Moving unused files to .deadfile-trash...'));
+        const trashDir = path.resolve(cwd, '.deadfile-trash');
+        if (!fs.existsSync(trashDir)) {
+          fs.mkdirSync(trashDir);
+        }
+
+        for (const file of result.unusedFiles) {
+          const relativePath = path.relative(cwd, file);
+          const trashPath = path.resolve(trashDir, relativePath.replace(/\\|\//g, '_'));
+          try {
+            fs.renameSync(file, trashPath);
+            console.log(chalk.gray(`Moved: ${relativePath}`));
+          } catch (e: any) {
+            console.error(chalk.red(`Failed to move ${relativePath}: ${e.message}`));
+          }
+        }
+        console.log(chalk.green('✅ Cleanup complete! (Check .deadfile-trash to recover if needed)'));
+      }
     }
   });
 

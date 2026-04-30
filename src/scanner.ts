@@ -1,6 +1,6 @@
 import fg from 'fast-glob';
 import path from 'path';
-import type { DeadFileConfig } from './config';
+import type { DeadFileConfig } from './config.js';
 
 export async function scanFiles(config: DeadFileConfig, cwd: string = process.cwd()): Promise<string[]> {
   const extList = config.extensions.map(ext => ext.startsWith('.') ? ext.slice(1) : ext).join(',');
